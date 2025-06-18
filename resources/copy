@@ -1,0 +1,129 @@
+# Import necessary libraries and modules
+from pydantic import BaseModel  # For request data validation
+import os  # For accessing environment variables
+from dotenv import load_dotenv  # For loading variables from a .env file
+import requests  # For making HTTP requests
+from fastapi import FastAPI  # FastAPI framework
+from fastapi.responses import JSONResponse  # To return custom JSON responses
+from fastapi.middleware.cors import CORSMiddleware  # To allow CORS access
+from PIL import Image  # For image handling
+import io  # For byte stream operations
+import base64  # For decoding base64-encoded data
+import pytesseract  # For OCR (optical character recognition)
+import weaviate  # For connecting to the Weaviate vector database
+from weaviate.classes.init import Auth  # For authentication with Weaviate
+
+# Load environment variables (e.g., API keys)
+load_dotenv()
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+
+# Weaviate credentials and endpoint
+WEAVIATE_URL = "zu1ijfg3rlyvlghm1kmzca.c0.asia-southeast1.gcp.weaviate.cloud"
+WEAVIATE_API_KEY = "TVVoZjVjc0NranZVeEV2VV9UOC9ieTlUbEsxZmhOQiszd0xHczJrVW4xdkYzR28xdllRWmpaN3VRVEt3PV92MjAw"
+
+# Establish connection to Weaviate cloud using API key
+client = weaviate.connect_to_weaviate_cloud(
+    cluster_url=WEAVIATE_URL,
+    auth_credentials=Auth.api_key(WEAVIATE_API_KEY),
+)
+
+# Access the "TextEmbedding" collection inside Weaviate
+collection = client.collections.get("TextEmbedding")
+
+# Initialize FastAPI app
+app = FastAPI()
+
+# Enable CORS (Cross-Origin Resource Sharing) to allow access from any frontend
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allow all origins
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Define the request body structure using Pydantic
+class Question(BaseModel):
+    question: str
+    image: str = None  # Optional base64-encoded image string
+
+# Function to extract text from base64-encoded image using OCR
+def extract_text_from_base64(base64_image: str) -> str:
+    image_data = base64.b64decode(base64_image)  # Decode the base64 string
+    image = Image.open(io.BytesIO(image_data))  # Convert bytes to image
+    text = pytesseract.image_to_string(image)  # Use Tesseract OCR to extract text
+    return text
+
+# Function to get text embeddings using OpenAI API (through a proxy)
+def get_embedding(text: str):
+    url = "https://aiproxy.sanand.workers.dev/openai/v1/embeddings"
+    headers = {
+        "Authorization": f"Bearer {OPENAI_API_KEY}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "model": "text-embedding-3-small",  # Use embedding model
+        "input": [text]
+    }
+    response = requests.post(url, headers=headers, json=payload)
+    response.raise_for_status()
+    return response.json()["data"][0]["embedding"]
+
+# Main endpoint to handle virtual TA queries
+@app.post("/virtual-ta")
+def virtual_ta(question: Question):
+    # Combine image text with question if both are provided
+    if question.question and question.image:
+        image_text = extract_text_from_base64(question.image)
+        query_text = question.question + " " + image_text
+    elif question.question:
+        query_text = question.question
+    elif question.image:
+        query_text = extract_text_from_base64(question.image)
+    else:
+        raise ValueError("No question or image provided")
+
+    # Generate vector embedding from the combined text
+    embedding = get_embedding(query_text)
+
+    # Query Weaviate collection for similar vectors
+    results = collection.query.near_vector(
+        near_vector=embedding,
+        limit=5,  # Return top 5 results
+        return_metadata=["distance"]
+    )
+
+    # Extract documents and their metadata
+    docs = results.objects
+    top_docs = [obj.properties.get("text", "") for obj in docs]
+    top_metas = [obj.metadata for obj in docs]
+
+    # Filter and clean up the results
+    lines = "\n".join(top_docs).split("\n")
+    clean_lines = [
+        line.strip()
+        for line in lines
+        if line.strip()
+        and not line.strip().startswith(("###", "##", "#", "-", "*", "`", "```"))  # Remove markdown
+        and len(line.strip()) > 15  # Skip very short lines
+    ]
+
+    # Return the top 3 meaningful lines as the answer
+    answer = " ".join(clean_lines[:3]) if clean_lines else "No clear answer found."
+
+    # Attempt to extract source URLs (if available)
+    links = []
+    for doc, meta in zip(top_docs, top_metas):
+        source = getattr(meta, "source", None)
+        if source:
+            text_line = doc.strip().split("\n")[0]
+            links.append({
+                "url": source,
+                "text": text_line
+            })
+
+    # Return the answer and links in the response
+    return JSONResponse(content={
+        "answer": answer,
+        "links": links
+    })
