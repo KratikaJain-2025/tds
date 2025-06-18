@@ -12,7 +12,7 @@ from weaviate.classes.init import Auth
 '''from fastapi.responses import RedirectResponse'''
 
 
-OPENAI_API_KEY="eyJhbGciOiJIUzI1NiJ9.eyJlbWFpbCI6IjI0ZjIwMDQ5MjJAZHMuc3R1ZHkuaWl0bS5hYy5pbiJ9.CfwJHvL6a0adtb7_Xu9in2i4Kg7BLXJTP6h3Qr_96D4"
+OPENAI_API_KEY = "eyJhbGciOiJIUzI1NiJ9.eyJlbWFpbCI6IjI0ZjIwMDQ5MjJAZHMuc3R1ZHkuaWl0bS5hYy5pbiJ9.CfwJHvL6a0adtb7_Xu9in2i4Kg7BLXJTP6h3Qr_96D4"
 WEAVIATE_URL = "zu1ijfg3rlyvlghm1kmzca.c0.asia-southeast1.gcp.weaviate.cloud"
 WEAVIATE_API_KEY = "TVVoZjVjc0NranZVeEV2VV9UOC9ieTlUbEsxZmhOQiszd0xHczJrVW4xdkYzR28xdllRWmpaN3VRVEt3PV92MjAw"
 
@@ -26,9 +26,9 @@ collection = client.collections.get("TextEmbedding")
 # Setup FastAPI
 app = FastAPI()
 
-'''@app.get("/")
+@app.get("/")
 def root():
-    return RedirectResponse(url="/docs#/default/virtual_ta_virtual_ta_post")'''
+    return {"message": "TDS Virtual TA is live! Visit /docs to test the API."}
 
 app.add_middleware(
     CORSMiddleware,
